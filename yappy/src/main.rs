@@ -1,12 +1,11 @@
-use std::io::{stdout, BufWriter};
-use std::env;
 use std::net::TcpStream;
 
-extern crate log;
-use log::{LevelFilter, debug, trace};
-
 extern crate clap;
-use clap::{Arg, App, SubCommand};
+use clap::{Arg, App};
+extern crate regex;
+use regex::Regex;
+extern crate log;
+use log::{debug, trace};
 extern crate simple_logger;
 use simple_logger::SimpleLogger;
 
@@ -16,7 +15,7 @@ use simple_logger::SimpleLogger;
 
 const MAXPORT: i32 = 65535;
 
-fn tcp_check_port(host: &str, port: i32) -> bool {
+fn tcp_port_connect(host: &str, port: i32) -> bool {
     let hostport = format!("{}:{}", host, port);
 
     if let Ok(_stream) = TcpStream::connect(hostport) {
@@ -26,6 +25,25 @@ fn tcp_check_port(host: &str, port: i32) -> bool {
         trace!("TCP port {} closed", port);
         return false;
     }
+}
+
+fn parse_port(port_range: &str) -> Vec<i32> {
+    let mut vec = Vec::with_capacity(1);
+    println!("lmao sup");
+
+    let re = Regex::new(r"(\d*)-(\d*)").unwrap();
+    let captures = re.captures(port_range).unwrap();
+    //FIXME this doesn't work as expected - null parameters cause an
+    // error because we can't parse a int on an empty value.
+    let start = captures.get(1).map_or(1, |m| m.as_str().parse::<i32>().unwrap());
+    println!("Start port: {}", start);
+    let end = captures.get(2).map_or(MAXPORT, |m| m.as_str().parse::<i32>().unwrap());
+    println!("End port: {}", end);
+
+    vec.push(start);
+    vec.push(end);
+    return vec;
+    //vec.push(;
 }
 
 fn main() {
@@ -39,11 +57,19 @@ fn main() {
              .help("The host to scan")
              .required(true)
              .index(1))
+        .arg(Arg::with_name("portrange")
+             .short("p")
+             .help("Port range to scan. Format: START-END, -END, START-")
+             .default_value("-")
+             .takes_value(true)
+             .hide_default_value(true))
         .arg(Arg::with_name("v")
              .short("v")
              .multiple(true)
              .help("Print verbose output"))
         .get_matches();
+
+    let portrange = parse_port(matches.value_of("portrange").unwrap());
 
     match matches.occurrences_of("v") {
         0 => simple_logger::SimpleLogger::new()
@@ -61,26 +87,17 @@ fn main() {
         3 | _ => println!("Don't be crazy"),
     }
 
-    //let args: Vec<String> = env::args().collect();
-    //println!("{:?}", args);
     let ip = matches.value_of("host").unwrap();
-    //let filename = &args[2];
-
-    let port = 22;
-
-    let port_start = 1;
-    let port_end = 2000;
-    //let port_end = MAXPORT;
 
     let protocol = "tcp";
 
     let mut port_succ = 0;
     let mut port_fail = 0;
 
-    let port_range = port_start..port_end;
+    let port_range = portrange[0]..portrange[1];
 
     for port_range_port in port_range {
-        if tcp_check_port(ip, port_range_port) {
+        if tcp_port_connect(ip, port_range_port) {
             port_succ += 1;
         } else {
             port_fail += 1;
