@@ -29,21 +29,19 @@ fn tcp_port_connect(host: &str, port: i32) -> bool {
 
 fn parse_port(port_range: &str) -> Vec<i32> {
     let mut vec = Vec::with_capacity(1);
-    println!("lmao sup");
 
-    let re = Regex::new(r"(\d*)-(\d*)").unwrap();
+    let re = Regex::new(r"(\d+)?-(\d+)?").unwrap();
     let captures = re.captures(port_range).unwrap();
-    //FIXME this doesn't work as expected - null parameters cause an
-    // error because we can't parse a int on an empty value.
+
     let start = captures.get(1).map_or(1, |m| m.as_str().parse::<i32>().unwrap());
-    println!("Start port: {}", start);
     let end = captures.get(2).map_or(MAXPORT, |m| m.as_str().parse::<i32>().unwrap());
-    println!("End port: {}", end);
+
+    debug!("Start port: {}", start);
+    debug!("End port: {}", end);
 
     vec.push(start);
     vec.push(end);
     return vec;
-    //vec.push(;
 }
 
 fn main() {
