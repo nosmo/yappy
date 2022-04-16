@@ -10,3 +10,5 @@ clap = "2.33.3"
 simple_logger = "1.13.0"
 log = { version = "^0.4.5", features = ["std"] }
 regex = "1"
+rand = "0.8.4"
+dns-lookup = "1.0.8"

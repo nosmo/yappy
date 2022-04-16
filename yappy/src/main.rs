@@ -1,4 +1,7 @@
-use std::net::TcpStream;
+use std::net::{SocketAddr, TcpStream, IpAddr};
+use rand::seq::SliceRandom;
+use dns_lookup::{lookup_host, getnameinfo};
+use std::str::FromStr;
 
 extern crate clap;
 use clap::{Arg, App};
@@ -7,30 +10,27 @@ use regex::Regex;
 extern crate log;
 use log::{debug, trace};
 extern crate simple_logger;
-use simple_logger::SimpleLogger;
-
-// this is a comment
-/* this is a comment */
-/// this one is a docstring that is general
 
 const MAXPORT: i32 = 65535;
 
 fn tcp_port_connect(host: &str, port: i32) -> bool {
     let hostport = format!("{}:{}", host, port);
 
+    trace!("Starting connection to {}:{}", host, port);
     if let Ok(_stream) = TcpStream::connect(hostport) {
-        debug!("TCP port {} open", port);
+        debug!("Got open port for {}:{}", host, port);
         return true;
     } else {
-        trace!("TCP port {} closed", port);
+        trace!("Got closed port for {}:{}", host, port);
         return false;
     }
 }
 
+/// port range can be expressed as 1-25 or 1:25
 fn parse_port(port_range: &str) -> Vec<i32> {
     let mut vec = Vec::with_capacity(1);
 
-    let re = Regex::new(r"(\d+)?-(\d+)?").unwrap();
+    let re = Regex::new(r"(\d+)?[-:](\d+)?").unwrap();
     let captures = re.captures(port_range).unwrap();
 
     let start = captures.get(1).map_or(1, |m| m.as_str().parse::<i32>().unwrap());
@@ -46,7 +46,6 @@ fn parse_port(port_range: &str) -> Vec<i32> {
 
 fn main() {
 
-    //! this is a docstring that is line specific
     let matches = App::new("yappy")
         .version("1.0")
         .author("hugh <nosmo@nosmo.me>")
@@ -68,6 +67,8 @@ fn main() {
         .get_matches();
 
     let portrange = parse_port(matches.value_of("portrange").unwrap());
+    log::debug!("Port range parsed");
+
 
     match matches.occurrences_of("v") {
         0 => simple_logger::SimpleLogger::new()
@@ -82,10 +83,24 @@ fn main() {
             .with_level(log::LevelFilter::Trace)
             .init()
             .unwrap(),
-        3 | _ => println!("Don't be crazy"),
+        3 | _ => println!("No... that's too many"),
     }
+    debug!("Yappy loaded");
 
-    let ip = matches.value_of("host").unwrap();
+    //let ip = matches.value_of("host").unwrap();
+
+    let ips: Vec<std::net::IpAddr> = lookup_host(matches.value_of("host").unwrap()).unwrap();
+
+    debug!("Found {} ips for {}", ips.len(), matches.value_of("host").unwrap());
+
+    //TODO this is redunant, just use stdlib lookups
+    let ip = match () {
+        _ if ips.len() < 1 => *ips.choose(&mut rand::thread_rng()).unwrap(), //.to_string().as_str(),
+        _ if ips.len() == 1 => ips[0],//.to_string().as_str(),
+        _   => IpAddr::from_str(matches.value_of("host").unwrap()).unwrap(),
+    };
+
+    debug!("Using IP address {}", ip.to_string().as_str());
 
     let protocol = "tcp";
 
@@ -95,13 +110,26 @@ fn main() {
     let port_range = portrange[0]..portrange[1];
 
     for port_range_port in port_range {
-        if tcp_port_connect(ip, port_range_port) {
+        trace!("{} port {} CONNECT", protocol, port_range_port);
+        if tcp_port_connect(ip.to_string().as_str(), port_range_port) {
+
+            // Do lookup to get service name for output
+            let socket: SocketAddr = format!("{}:{}", ip.to_string(), port_range_port)
+                .parse()
+                .expect("Unable to parse socket address");
+            let (name, service) = match getnameinfo(&socket, 0) {
+                Ok((n, s)) => (n, s),
+                Err(e) => panic!("Failed to lookup socket {:?}", e),
+            };
+
+            debug!("{} port {}:{} [{}] open", protocol, name, port_range_port, service);
             port_succ += 1;
         } else {
             port_fail += 1;
+            trace!("{} port {} closed", protocol, port_range_port);
         }
     }
 
     println!("{} ports open", port_succ);
-    println!("{} ports closed", port_fail);
+    debug!("{} ports closed", port_fail);
 }
