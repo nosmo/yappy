@@ -3,6 +3,7 @@ use rand::seq::SliceRandom;
 use dns_lookup::{lookup_host, getnameinfo};
 use std::str::FromStr;
 use std::thread;
+use std::sync::mpsc;
 
 extern crate clap;
 use clap::{Arg, App};
@@ -13,7 +14,8 @@ use log::{debug, trace};
 extern crate simple_logger;
 
 const MAXPORT: i32 = 65535;
-const SCAN_BATCH: usize = 64;
+/// Number of ports to batch together into threads.
+const SCAN_BATCH: usize = 4;
 
 fn tcp_port_connect(host: &str, port: i32) -> bool {
     let hostport = format!("{}:{}", host, port);
@@ -47,6 +49,11 @@ fn parse_port(port_range: &str) -> Vec<i32> {
 }
 
 fn main() {
+
+    /* TODOs
+     * - multiple output formats (JSON etc)
+     * - configurable thread chunking
+     */
 
     let matches = App::new("yappy")
         .version("1.0")
@@ -115,12 +122,18 @@ fn main() {
     let port_vector: Vec<_> = port_range.collect();
 
     //let port_slices: Vec<&[i32]> = port_vector.chunks(64).collect();
-    let port_slices = port_vector.chunks(2);
+    // TODO take this chunk from input
+    let port_slices = port_vector.chunks(SCAN_BATCH);
 
     let mut handles = vec![];
+    let (tx, rx) = mpsc::channel();
 
     for port_slice in port_slices {
+        // move port_slice off the stack so that we can pass to the thread
         let port_slice_vec = port_slice.to_vec();
+        // clone our tx so we can pass messages back up to the main thread
+        let thread_tx = tx.clone();
+
         let handle = thread::spawn(move || {
             for port_range_port in port_slice_vec {
                 trace!("{} port {} CONNECT", protocol, port_range_port);
@@ -136,18 +149,22 @@ fn main() {
                     };
 
                     debug!("{} port {}:{} [{}] open", protocol, name, port_range_port, service);
-                    port_succ += 1;
+                    thread_tx.send(port_range_port).unwrap();
                 } else {
-                    port_fail += 1;
                     trace!("{} port {} closed", protocol, port_range_port);
                 }
             }
         });
+        trace!("Done with chunk starting {}", port_slice[0]);
         handles.push(handle);
     }
+    // Now that we are done, drop the channel here so that we can poll
+    // the rx channel without blocking.
+    drop(tx);
 
-    for handle in handles {
-        handle.join().unwrap();
+    for received in rx {
+        port_succ += 1;
+        println!("Got open port: {}", received);
     }
 
     println!("{} ports open", port_succ);
