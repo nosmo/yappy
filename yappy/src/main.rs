@@ -2,6 +2,7 @@ use std::net::{SocketAddr, TcpStream, IpAddr};
 use rand::seq::SliceRandom;
 use dns_lookup::{lookup_host, getnameinfo};
 use std::str::FromStr;
+use std::thread;
 
 extern crate clap;
 use clap::{Arg, App};
@@ -12,6 +13,7 @@ use log::{debug, trace};
 extern crate simple_logger;
 
 const MAXPORT: i32 = 65535;
+const SCAN_BATCH: usize = 64;
 
 fn tcp_port_connect(host: &str, port: i32) -> bool {
     let hostport = format!("{}:{}", host, port);
@@ -109,25 +111,43 @@ fn main() {
 
     let port_range = portrange[0]..portrange[1];
 
-    for port_range_port in port_range {
-        trace!("{} port {} CONNECT", protocol, port_range_port);
-        if tcp_port_connect(ip.to_string().as_str(), port_range_port) {
+    //let port_vector = port_range.collect::<Vec<i32>>();
+    let port_vector: Vec<_> = port_range.collect();
 
-            // Do lookup to get service name for output
-            let socket: SocketAddr = format!("{}:{}", ip.to_string(), port_range_port)
-                .parse()
-                .expect("Unable to parse socket address");
-            let (name, service) = match getnameinfo(&socket, 0) {
-                Ok((n, s)) => (n, s),
-                Err(e) => panic!("Failed to lookup socket {:?}", e),
-            };
+    //let port_slices: Vec<&[i32]> = port_vector.chunks(64).collect();
+    let port_slices = port_vector.chunks(2);
 
-            debug!("{} port {}:{} [{}] open", protocol, name, port_range_port, service);
-            port_succ += 1;
-        } else {
-            port_fail += 1;
-            trace!("{} port {} closed", protocol, port_range_port);
-        }
+    let mut handles = vec![];
+
+    for port_slice in port_slices {
+        let port_slice_vec = port_slice.to_vec();
+        let handle = thread::spawn(move || {
+            for port_range_port in port_slice_vec {
+                trace!("{} port {} CONNECT", protocol, port_range_port);
+                if tcp_port_connect(ip.to_string().as_str(), port_range_port) {
+
+                    // Do lookup to get service name for output
+                    let socket: SocketAddr = format!("{}:{}", ip.to_string(), port_range_port)
+                        .parse()
+                        .expect("Unable to parse socket address");
+                    let (name, service) = match getnameinfo(&socket, 0) {
+                        Ok((n, s)) => (n, s),
+                        Err(e) => panic!("Failed to lookup socket {:?}", e),
+                    };
+
+                    debug!("{} port {}:{} [{}] open", protocol, name, port_range_port, service);
+                    port_succ += 1;
+                } else {
+                    port_fail += 1;
+                    trace!("{} port {} closed", protocol, port_range_port);
+                }
+            }
+        });
+        handles.push(handle);
+    }
+
+    for handle in handles {
+        handle.join().unwrap();
     }
 
     println!("{} ports open", port_succ);
